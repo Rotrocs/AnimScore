@@ -53,7 +53,7 @@ Each metric is normalised against **absolute bounds** (independent of the corpus
 ## Installation
 
 ```bash
-git clone https://github.com/Rotrocs/animscore.git
+git clone https://github.com/Rotrocs/AnimScore.git
 cd animscore
 pip install -r requirements.txt
 ```
