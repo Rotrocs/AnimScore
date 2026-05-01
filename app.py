@@ -117,7 +117,8 @@ def analyser_video(video_path, progress_bar, status_text):
     progress_bar.progress(0.65)
 
     video = VideoFileClip(video_path)
-    audio_path = r"D:\temp_audio_app.wav"
+    import tempfile
+    audio_path = tempfile.mktemp(suffix=".wav")
     video.audio.write_audiofile(audio_path, logger=None)
     video.close()
 
