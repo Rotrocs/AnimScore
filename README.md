@@ -114,8 +114,8 @@ Contributions are welcome ! Feel free to :
 
 AnimScore is dual-licensed :
 
-- **Non-commercial use** (personal, academic, public institutions) → [MIT Non-Commercial](LICENSE)
-- **Commercial use** → [Commercial License](LICENSE-COMMERCIAL)
+- **Non-commercial use** (personal, academic, public institutions) → MIT Non-Commercial (LICENSE)
+- **Commercial use** → Commercial License LICENSE-COMMERCIAL
 
 For commercial licensing inquiries, please open an issue or contact me directly via GitHub : [@Rotrocs](https://github.com/Rotrocs)
 
