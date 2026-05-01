@@ -1,0 +1,6 @@
+opencv-python-headless
+librosa
+moviepy
+streamlit
+numpy
+pandas
