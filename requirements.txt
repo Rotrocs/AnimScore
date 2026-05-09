@@ -4,3 +4,10 @@ moviepy
 streamlit
 numpy
 pandas
+aiohttp
+openai-whisperopencv-python-headless
+librosa
+moviepy
+streamlit
+numpy
+pandas
