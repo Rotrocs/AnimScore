@@ -2,12 +2,28 @@ import streamlit as st
 import cv2
 import numpy as np
 import librosa
-from moviepy import VideoFileClip
 import tempfile
 import os
+from moviepy import VideoFileClip
 
 # ── CONFIGURATION ────────────────────────────────────────
 st.set_page_config(page_title="AnimScore", page_icon="🎬", layout="centered")
+
+# ── SIDEBAR ──────────────────────────────────────────────
+with st.sidebar:
+    st.header("🤖 Analyse IA")
+    st.caption("Optionnel — nécessite une clé API Mammouth")
+    api_key = st.text_input(
+        "Clé API Mammouth",
+        type="password",
+        placeholder="sk-..."
+    )
+    if api_key:
+        st.success("✅ Clé API configurée")
+    else:
+        st.info("Sans clé API, seule l'analyse audio/visuelle est disponible")
+    st.divider()
+    st.caption("Obtenez votre clé sur [mammouth.ai](https://mammouth.ai/app/account/settings/api)")
 
 # ── STYLE NUTRISCORE ─────────────────────────────────────
 NUTRISCORE_COLORS = {
@@ -58,7 +74,7 @@ def attribuer_lettre(score):
     elif score >= 20: return "D"
     else:             return "E"
 
-# ── ANALYSE ──────────────────────────────────────────────
+# ── ANALYSE VIDÉO + AUDIO ────────────────────────────────
 def analyser_video(video_path, progress_bar, status_text):
 
     # VIDÉO
@@ -112,18 +128,16 @@ def analyser_video(video_path, progress_bar, status_text):
     flicker = np.mean(np.abs(np.diff(luminosites_brutes)))
     saturation_moyenne = np.mean(saturations)
 
-    # AUDIO
+    # AUDIO — on garde le fichier pour Whisper
     status_text.text("⏳ Analyse audio en cours...")
     progress_bar.progress(0.65)
 
     video = VideoFileClip(video_path)
-    import tempfile
     audio_path = tempfile.mktemp(suffix=".wav")
     video.audio.write_audiofile(audio_path, logger=None)
     video.close()
 
     audio, sr = librosa.load(audio_path, sr=22050, mono=True)
-    os.remove(audio_path)
 
     progress_bar.progress(0.75)
 
@@ -148,7 +162,7 @@ def analyser_video(video_path, progress_bar, status_text):
     progress_bar.progress(1.0)
     status_text.text("✅ Analyse terminée !")
 
-    return {
+    resultats = {
         "duree_minutes"     : round(duree_minutes, 1),
         "cuts_par_minute"   : round(cuts_par_minute, 1),
         "flicker"           : round(flicker, 2),
@@ -158,6 +172,9 @@ def analyser_video(video_path, progress_bar, status_text):
         "variabilite_onset" : round(variabilite_onset, 1),
         "ratio_silence"     : round(ratio_silence, 2),
     }
+
+    # On retourne aussi audio_path pour Whisper
+    return resultats, audio_path
 
 # ── INTERFACE ────────────────────────────────────────────
 st.title("🎬 AnimScore")
@@ -180,17 +197,16 @@ if fichier is not None:
         status_text = st.empty()
 
         try:
-            resultats = analyser_video(tmp_path, progress_bar, status_text)
-            os.remove(tmp_path)
+            resultats, audio_path = analyser_video(tmp_path, progress_bar, status_text)
 
         except MemoryError:
             os.remove(tmp_path)
-            st.error("❌ Mémoire insuffisante pour analyser cette vidéo. Essayez avec un fichier plus court.")
+            st.error("❌ Mémoire insuffisante. Essayez avec un fichier plus court.")
             st.stop()
 
         except Exception as e:
             os.remove(tmp_path)
-            st.error(f"❌ Erreur pendant l'analyse : {str(e)}")
+            st.error(f"❌ Erreur : {str(e)}")
             st.stop()
 
         # SCORES
@@ -247,3 +263,42 @@ if fichier is not None:
             st.metric("Écart dynamique", f"{resultats['ecart_dynamique']} dB")
             st.metric("Variabilité onset", resultats["variabilite_onset"])
             st.metric("Ratio silence", resultats["ratio_silence"])
+
+        # ANALYSE IA
+        if api_key:
+            st.divider()
+            if st.button("🤖 Lancer l'analyse IA", type="secondary", use_container_width=True):
+                from ia_analysis import analyser_ia
+                with st.spinner("⏳ Transcription et analyse IA en cours..."):
+                    try:
+                        resultats_ia = analyser_ia(tmp_path, audio_path, api_key)
+
+                        st.subheader("🤖 Analyse IA")
+
+                        with st.expander("📝 Transcription"):
+                            st.write(resultats_ia["transcription"])
+
+                        col7, col8, col9 = st.columns(3)
+                        with col7:
+                            st.markdown("**Analyse narrative**")
+                            st.json(resultats_ia["narrative"])
+                        with col8:
+                            st.markdown("**Analyse visuelle IA**")
+                            st.json(resultats_ia["visuelle_ia"])
+                        with col9:
+                            st.markdown("**Vocabulaire**")
+                            st.json(resultats_ia["vocabulaire"])
+
+                    except Exception as e:
+                        st.error(f"❌ Erreur analyse IA : {str(e)}")
+
+        else:
+            st.divider()
+            st.info("💡 Ajoutez une clé API Mammouth dans la sidebar pour activer l'analyse IA")
+
+        # Nettoyage fichiers temporaires
+        try:
+            os.remove(tmp_path)
+            os.remove(audio_path)
+        except:
+            pass
