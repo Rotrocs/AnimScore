@@ -1,4 +1,3 @@
-import whisper
 import asyncio
 import aiohttp
 import base64
@@ -6,9 +5,6 @@ import cv2
 import numpy as np
 import json
 import os
-
-# ── MODÈLE WHISPER ───────────────────────────────────────
-whisper_model = whisper.load_model("small")
 
 # ── EXTRACTION DES FRAMES CLÉS ───────────────────────────
 def extraire_frames(video_path, nb_frames=8):
@@ -26,10 +22,10 @@ def extraire_frames(video_path, nb_frames=8):
     cap.release()
     return frames_b64
 
-# ── TRANSCRIPTION WHISPER ────────────────────────────────
-def transcrire(audio_path):
-    result = whisper_model.transcribe(audio_path, language="fr")
-    return result["text"]
+# ── ENCODER AUDIO EN BASE64 ──────────────────────────────
+def encoder_audio(audio_path):
+    with open(audio_path, "rb") as f:
+        return base64.b64encode(f.read()).decode("utf-8")
 
 # ── APPEL API MAMMOUTH ───────────────────────────────────
 async def appeler_llm(session, messages, model, api_key):
@@ -43,11 +39,59 @@ async def appeler_llm(session, messages, model, api_key):
         result = await response.json()
         return result["choices"][0]["message"]["content"]
 
-# ── ANALYSE PARALLÈLE ────────────────────────────────────
-async def analyser_ia_async(video_path, audio_path, api_key):
+# ── PARSER JSON ──────────────────────────────────────────
+def parse_json(text):
+    try:
+        text = text.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0]
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0]
+        return json.loads(text)
+    except:
+        return {"erreur": "Impossible de parser", "raw": text[:200]}
+
+# ── TRANSCRIPTION OPENAI ─────────────────────────────────
+async def transcrire_openai(audio_path, openai_key):
+    url = "https://api.openai.com/v1/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {openai_key}"}
+    with open(audio_path, "rb") as f:
+        data = aiohttp.FormData()
+        data.add_field("file", f, filename="audio.mp3", content_type="audio/mpeg")
+        data.add_field("model", "gpt-4o-transcribe")
+        data.add_field("language", "fr")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, data=data) as response:
+                result = await response.json()
+                return result.get("text", "")
+
+# ── TRANSCRIPTION GEMINI ─────────────────────────────────
+async def transcrire_gemini(audio_path, api_key):
+    audio_b64 = encoder_audio(audio_path)
+    async with aiohttp.ClientSession() as session:
+        result = await appeler_llm(session, [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_audio",
+                    "input_audio": {"data": audio_b64, "format": "mp3"}
+                },
+                {
+                    "type": "text",
+                    "text": "Transcris cet audio mot pour mot en français. Réponds uniquement avec la transcription, sans commentaire."
+                }
+            ]
+        }], "gemini-2.5-flash", api_key)
+        return result
+
+# ── ANALYSE PRINCIPALE ───────────────────────────────────
+async def analyser_ia_async(video_path, audio_path, api_key, openai_key=None):
 
     # Transcription
-    transcription = transcrire(audio_path)
+    if openai_key:
+        transcription = await transcrire_openai(audio_path, openai_key)
+    else:
+        transcription = await transcrire_gemini(audio_path, api_key)
 
     # Frames
     frames_b64 = extraire_frames(video_path, nb_frames=8)
@@ -64,8 +108,6 @@ Analyse ce script de dessin animé et réponds UNIQUEMENT en JSON valide :
   "themes_sensibles": [],
   "niveau_violence": 0,
   "niveau_peur": 0,
-  "complexite_langage": 0,
-  "valeurs_vehiculees": [],
   "note_narrative": "A",
   "resume": ""
 }}
@@ -105,24 +147,10 @@ Analyse le vocabulaire de ce script et réponds UNIQUEMENT en JSON valide :
   "niveau_agressivite_verbale": 0,
   "note_vocabulaire": "A"
 }}
-Les notes vont de A (très bien) à E (préoccupant).
-Les niveaux sont de 0 à 10.
 
 Script : {transcription[:3000]}"""
             }], "gpt-4.1", api_key),
         )
-
-        # Parser les JSON
-        def parse_json(text):
-            try:
-                text = text.strip()
-                if "```json" in text:
-                    text = text.split("```json")[1].split("```")[0]
-                elif "```" in text:
-                    text = text.split("```")[1].split("```")[0]
-                return json.loads(text)
-            except:
-                return {"erreur": "Impossible de parser la réponse", "raw": text[:200]}
 
         return {
             "transcription" : transcription,
@@ -132,5 +160,5 @@ Script : {transcription[:3000]}"""
         }
 
 # ── FONCTION PRINCIPALE ──────────────────────────────────
-def analyser_ia(video_path, audio_path, api_key):
-    return asyncio.run(analyser_ia_async(video_path, audio_path, api_key))
+def analyser_ia(video_path, audio_path, api_key, openai_key=None):
+    return asyncio.run(analyser_ia_async(video_path, audio_path, api_key, openai_key))

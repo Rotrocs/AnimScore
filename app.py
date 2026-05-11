@@ -9,21 +9,50 @@ from moviepy import VideoFileClip
 # ── CONFIGURATION ────────────────────────────────────────
 st.set_page_config(page_title="AnimScore", page_icon="🎬", layout="centered")
 
+# ── INITIALISATION SESSION STATE ─────────────────────────
+if "analyse_done" not in st.session_state:
+    st.session_state["analyse_done"] = False
+if "resultats" not in st.session_state:
+    st.session_state["resultats"] = None
+if "audio_path" not in st.session_state:
+    st.session_state["audio_path"] = None
+if "tmp_path" not in st.session_state:
+    st.session_state["tmp_path"] = None
+if "resultats_ia" not in st.session_state:
+    st.session_state["resultats_ia"] = None
+
 # ── SIDEBAR ──────────────────────────────────────────────
 with st.sidebar:
     st.header("🤖 Analyse IA")
-    st.caption("Optionnel — nécessite une clé API Mammouth")
+    st.divider()
+    
+    st.subheader("Clé Mammouth")
     api_key = st.text_input(
         "Clé API Mammouth",
         type="password",
         placeholder="sk-..."
     )
     if api_key:
-        st.success("✅ Clé API configurée")
+        st.success("✅ Mammouth configuré")
     else:
-        st.info("Sans clé API, seule l'analyse audio/visuelle est disponible")
+        st.info("Nécessaire pour l'analyse IA")
+
     st.divider()
-    st.caption("Obtenez votre clé sur [mammouth.ai](https://mammouth.ai/app/account/settings/api)")
+    
+    st.subheader("Clé OpenAI (optionnel)")
+    openai_key = st.text_input(
+        "Clé API OpenAI",
+        type="password",
+        placeholder="sk-proj-..."
+    )
+    if openai_key:
+        st.success("✅ Transcription améliorée")
+    else:
+        st.caption("Sans clé OpenAI, Gemini transcrit l'audio")
+
+    st.divider()
+    st.caption("Clé Mammouth : [mammouth.ai](https://mammouth.ai/app/account/settings/api)")
+    st.caption("Clé OpenAI : [platform.openai.com](https://platform.openai.com/api-keys)")
 
 # ── STYLE NUTRISCORE ─────────────────────────────────────
 NUTRISCORE_COLORS = {
@@ -77,7 +106,6 @@ def attribuer_lettre(score):
 # ── ANALYSE VIDÉO + AUDIO ────────────────────────────────
 def analyser_video(video_path, progress_bar, status_text):
 
-    # VIDÉO
     status_text.text("⏳ Analyse vidéo en cours...")
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -128,7 +156,6 @@ def analyser_video(video_path, progress_bar, status_text):
     flicker = np.mean(np.abs(np.diff(luminosites_brutes)))
     saturation_moyenne = np.mean(saturations)
 
-    # AUDIO — on garde le fichier pour Whisper
     status_text.text("⏳ Analyse audio en cours...")
     progress_bar.progress(0.65)
 
@@ -173,7 +200,6 @@ def analyser_video(video_path, progress_bar, status_text):
         "ratio_silence"     : round(ratio_silence, 2),
     }
 
-    # On retourne aussi audio_path pour Whisper
     return resultats, audio_path
 
 # ── INTERFACE ────────────────────────────────────────────
@@ -181,7 +207,17 @@ st.title("🎬 AnimScore")
 st.caption("Analyse l'excitation visuelle et sonore d'un dessin animé")
 st.divider()
 
-fichier = st.file_uploader("Choisir une vidéo", type=["mp4", "mkv", "avi"])
+fichier = st.file_uploader(
+    "Choisir une vidéo",
+    type=["mp4", "mkv", "avi"],
+    on_change=lambda: st.session_state.update({
+        "analyse_done": False,
+        "resultats": None,
+        "audio_path": None,
+        "tmp_path": None,
+        "resultats_ia": None
+    })
+)
 
 if fichier is not None:
     st.video(fichier)
@@ -198,6 +234,11 @@ if fichier is not None:
 
         try:
             resultats, audio_path = analyser_video(tmp_path, progress_bar, status_text)
+            st.session_state["resultats"]    = resultats
+            st.session_state["audio_path"]   = audio_path
+            st.session_state["tmp_path"]     = tmp_path
+            st.session_state["analyse_done"] = True
+            st.session_state["resultats_ia"] = None
 
         except MemoryError:
             os.remove(tmp_path)
@@ -209,96 +250,107 @@ if fichier is not None:
             st.error(f"❌ Erreur : {str(e)}")
             st.stop()
 
-        # SCORES
-        n = {k: normaliser(resultats[k], *BORNES[k]) for k in BORNES}
+# ── AFFICHAGE RÉSULTATS ──────────────────────────────────
+if st.session_state["analyse_done"] and st.session_state["resultats"]:
 
-        score_visuel = round(
-            0.40 * (100 - n["cuts_par_minute"]) +
-            0.40 * (100 - n["flicker"]) +
-            0.20 * (100 - n["saturation_moyenne"]), 1)
+    resultats = st.session_state["resultats"]
 
-        score_sonore = round(
-            0.45 * n["ecart_dynamique"] +
-            0.35 * (100 - n["onset_rate"]) +
-            0.15 * (100 - n["variabilite_onset"]) +
-            0.05 * n["ratio_silence"], 1)
+    n = {k: normaliser(resultats[k], *BORNES[k]) for k in BORNES}
 
-        score_global = round((score_visuel + score_sonore) / 2, 1)
+    score_visuel = round(
+        0.40 * (100 - n["cuts_par_minute"]) +
+        0.40 * (100 - n["flicker"]) +
+        0.20 * (100 - n["saturation_moyenne"]), 1)
 
-        lettre_v = attribuer_lettre(score_visuel)
-        lettre_s = attribuer_lettre(score_sonore)
-        lettre_g = attribuer_lettre(score_global)
+    score_sonore = round(
+        0.45 * n["ecart_dynamique"] +
+        0.35 * (100 - n["onset_rate"]) +
+        0.15 * (100 - n["variabilite_onset"]) +
+        0.05 * n["ratio_silence"], 1)
 
-        # AFFICHAGE SCORES
+    score_global = round((score_visuel + score_sonore) / 2, 1)
+
+    lettre_v = attribuer_lettre(score_visuel)
+    lettre_s = attribuer_lettre(score_sonore)
+    lettre_g = attribuer_lettre(score_global)
+
+    st.divider()
+    st.subheader("🎯 Scores")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("**Visuel**")
+        st.markdown(nutriscore_badge(lettre_v), unsafe_allow_html=True)
+        st.metric("", f"{score_visuel} / 100")
+    with col2:
+        st.markdown("**Sonore**")
+        st.markdown(nutriscore_badge(lettre_s), unsafe_allow_html=True)
+        st.metric("", f"{score_sonore} / 100")
+    with col3:
+        st.markdown("**Global**")
+        st.markdown(nutriscore_badge(lettre_g), unsafe_allow_html=True)
+        st.metric("", f"{score_global} / 100")
+
+    st.divider()
+    st.subheader("📊 Détail des métriques")
+
+    col4, col5, col6 = st.columns(3)
+    with col4:
+        st.metric("Durée", f"{resultats['duree_minutes']} min")
+        st.metric("Cuts / minute", resultats["cuts_par_minute"])
+        st.metric("Flicker", resultats["flicker"])
+    with col5:
+        st.metric("Saturation", resultats["saturation_moyenne"])
+        st.metric("Onset rate", resultats["onset_rate"])
+    with col6:
+        st.metric("Écart dynamique", f"{resultats['ecart_dynamique']} dB")
+        st.metric("Variabilité onset", resultats["variabilite_onset"])
+        st.metric("Ratio silence", resultats["ratio_silence"])
+
+    # ── ANALYSE IA ───────────────────────────────────────
+    if api_key:
         st.divider()
-        st.subheader("🎯 Scores")
+        if st.button("🤖 Lancer l'analyse IA", type="secondary", use_container_width=True):
+            from ia_analysis import analyser_ia
+            with st.spinner("⏳ Transcription et analyse IA en cours..."):
+                try:
+                    resultats_ia = analyser_ia(
+                        st.session_state["tmp_path"],
+                        st.session_state["audio_path"],
+                        api_key,
+			openai_key
+                    )
+                    st.session_state["resultats_ia"] = resultats_ia
+                except Exception as e:
+                    st.error(f"❌ Erreur analyse IA : {str(e)}")
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown("**Visuel**")
-            st.markdown(nutriscore_badge(lettre_v), unsafe_allow_html=True)
-            st.metric("", f"{score_visuel} / 100")
-        with col2:
-            st.markdown("**Sonore**")
-            st.markdown(nutriscore_badge(lettre_s), unsafe_allow_html=True)
-            st.metric("", f"{score_sonore} / 100")
-        with col3:
-            st.markdown("**Global**")
-            st.markdown(nutriscore_badge(lettre_g), unsafe_allow_html=True)
-            st.metric("", f"{score_global} / 100")
+        if st.session_state["resultats_ia"]:
+            resultats_ia = st.session_state["resultats_ia"]
+            st.subheader("🤖 Analyse IA")
 
-        # AFFICHAGE MÉTRIQUES
+            with st.expander("📝 Transcription"):
+                st.write(resultats_ia["transcription"])
+
+            col7, col8, col9 = st.columns(3)
+            with col7:
+                st.markdown("**Analyse narrative**")
+                st.json(resultats_ia["narrative"])
+            with col8:
+                st.markdown("**Analyse visuelle IA**")
+                st.json(resultats_ia["visuelle_ia"])
+            with col9:
+                st.markdown("**Vocabulaire**")
+                st.json(resultats_ia["vocabulaire"])
+    else:
         st.divider()
-        st.subheader("📊 Détail des métriques")
+        st.info("💡 Ajoutez une clé API Mammouth dans la sidebar pour activer l'analyse IA")
 
-        col4, col5, col6 = st.columns(3)
-        with col4:
-            st.metric("Durée", f"{resultats['duree_minutes']} min")
-            st.metric("Cuts / minute", resultats["cuts_par_minute"])
-            st.metric("Flicker", resultats["flicker"])
-        with col5:
-            st.metric("Saturation", resultats["saturation_moyenne"])
-            st.metric("Onset rate", resultats["onset_rate"])
-        with col6:
-            st.metric("Écart dynamique", f"{resultats['ecart_dynamique']} dB")
-            st.metric("Variabilité onset", resultats["variabilite_onset"])
-            st.metric("Ratio silence", resultats["ratio_silence"])
-
-        # ANALYSE IA
-        if api_key:
-            st.divider()
-            if st.button("🤖 Lancer l'analyse IA", type="secondary", use_container_width=True):
-                from ia_analysis import analyser_ia
-                with st.spinner("⏳ Transcription et analyse IA en cours..."):
-                    try:
-                        resultats_ia = analyser_ia(tmp_path, audio_path, api_key)
-
-                        st.subheader("🤖 Analyse IA")
-
-                        with st.expander("📝 Transcription"):
-                            st.write(resultats_ia["transcription"])
-
-                        col7, col8, col9 = st.columns(3)
-                        with col7:
-                            st.markdown("**Analyse narrative**")
-                            st.json(resultats_ia["narrative"])
-                        with col8:
-                            st.markdown("**Analyse visuelle IA**")
-                            st.json(resultats_ia["visuelle_ia"])
-                        with col9:
-                            st.markdown("**Vocabulaire**")
-                            st.json(resultats_ia["vocabulaire"])
-
-                    except Exception as e:
-                        st.error(f"❌ Erreur analyse IA : {str(e)}")
-
-        else:
-            st.divider()
-            st.info("💡 Ajoutez une clé API Mammouth dans la sidebar pour activer l'analyse IA")
-
-        # Nettoyage fichiers temporaires
+    # ── NETTOYAGE ────────────────────────────────────────
+    if not api_key or st.session_state["resultats_ia"]:
         try:
-            os.remove(tmp_path)
-            os.remove(audio_path)
+            if st.session_state["tmp_path"] and os.path.exists(st.session_state["tmp_path"]):
+                os.remove(st.session_state["tmp_path"])
+            if st.session_state["audio_path"] and os.path.exists(st.session_state["audio_path"]):
+                os.remove(st.session_state["audio_path"])
         except:
             pass
